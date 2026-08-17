@@ -1,0 +1,277 @@
+# 1. Crear directorio base y subcarpetas
+mkdir -p /home/smith/ctf-prerequisitos/{ftp,html,ssh,plataforma-web/public}
+cd /home/smith/ctf-prerequisitos
+
+# 2. Archivo del Reto 6 (FTP)
+cat << 'EOF' > ftp/welcome.txt
+¡Conexión FTP exitosa!
+Tu flag para el Reto 6 es: FLAG{ftp_anonymous_access_granted}
+EOF
+
+# 3. Archivo del Reto 7 (HTTP)
+cat << 'EOF' > html/index.html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Laboratorio de Pentesting</title>
+</head>
+<body>
+    <h1>Bienvenido al Laboratorio de Pentesting</h1>
+    <p>Si estás viendo esta página, el servicio HTTP en el puerto 80 funciona correctamente.</p>
+    <!-- PISTA DE AUDITORÍA: FLAG{http_source_code_inspection} -->
+</body>
+</html>
+EOF
+
+# 4. Dockerfile del Reto SSH/Linux (Retos 3, 4, 5 y 8)
+cat << 'EOF' > ssh/Dockerfile
+FROM ubuntu:22.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y openssh-server sudo grep coreutils && rm -rf /var/lib/apt/lists/*
+RUN mkdir /var/run/sshd
+RUN useradd -m -s /bin/bash alumno && echo 'alumno:cisco123' | chpasswd
+RUN echo "FLAG{hidden_files_mastered}" > /home/alumno/.flag1.txt && chown alumno:alumno /home/alumno/.flag1.txt
+RUN mkdir -p /var/log && echo "[INFO] System booting up...\n[WARN] High CPU load\n[AUDIT] Secret key: FLAG{grep_text_filtering_2026}\n[INFO] User logged in" > /var/log/system_audit.log && chmod 644 /var/log/system_audit.log
+RUN mkdir -p /opt/secret && echo "FLAG{linux_permissions_ok}" > /opt/secret/confidential.txt && chown alumno:alumno /opt/secret/confidential.txt && chmod 400 /opt/secret/confidential.txt
+RUN echo "¡Felicidades por completar el acceso SSH! Flag: FLAG{ssh_secure_shell_connected}" > /home/alumno/final_flag.txt && chown alumno:alumno /home/alumno/final_flag.txt
+EXPOSE 22
+CMD ["/usr/sbin/sshd", "-D"]
+EOF
+
+# 5. Configuración de la Plataforma Web (Node.js + Express + SQLite)
+cat << 'EOF' > plataforma-web/package.json
+{
+  "name": "ctf-platform",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "express": "^4.18.2", "sqlite3": "^5.1.6" }
+}
+EOF
+
+cat << 'EOF' > plataforma-web/Dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+EXPOSE 3000
+CMD ["npm", "start"]
+EOF
+
+cat << 'EOF' > plataforma-web/server.js
+const express = require('express');
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+
+const app = express();
+const PORT = 3000;
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+const db = new sqlite3.Database('./ctf.db');
+
+db.serialize(() => {
+    db.run(`CREATE TABLE IF NOT EXISTS challenges (
+        id TEXT PRIMARY KEY, title TEXT, category TEXT, points INTEGER, description TEXT, flag TEXT
+    )`);
+
+    const challenges = [
+        ["reto_01", "01. Dirección Física (MAC)", "Redes", 50, "Ejecuta 'ipconfig /all' en tu máquina Windows y encuentra la Dirección Física de tu tarjeta activa. Formato: FLAG{XX-XX-XX-XX-XX-XX} o FLAG{XX:XX:XX:XX:XX:XX}.", "DYNAMIC_MAC"],
+        ["reto_02", "02. Servidor DNS", "Redes", 50, "Usando la salida del comando anterior, ingresa la IP del servidor DNS configurado. Formato: FLAG{X.X.X.X}.", "DYNAMIC_IP"],
+        ["reto_03", "03. Archivos Ocultos", "Linux", 100, "Conéctate por SSH (puerto 2222, usuario: alumno, pass: cisco123) y localiza el archivo oculto en el home (~/.flag1.txt).", "FLAG{hidden_files_mastered}"],
+        ["reto_04", "04. Filtrado con Grep", "Linux", 100, "Inspecciona el archivo '/var/log/system_audit.log' en la MV Linux y filtra la línea con la palabra FLAG.", "FLAG{grep_text_filtering_2026}"],
+        ["reto_05", "05. Permisos de Archivos", "Linux", 100, "Inspecciona los permisos del archivo '/opt/secret/confidential.txt' y lee su contenido.", "FLAG{linux_permissions_ok}"],
+        ["reto_06", "06. FTP Anónimo", "Servicios", 150, "Conéctate de forma anónima al servicio FTP (puerto 21) del servidor y lee el archivo 'welcome.txt'.", "FLAG{ftp_anonymous_access_granted}"],
+        ["reto_07", "07. Inspección HTTP", "Servicios", 150, "Inspecciona el código fuente HTML del servidor web (puerto 80) para encontrar la flag oculta.", "FLAG{http_source_code_inspection}"],
+        ["reto_08", "08. Acceso SSH Final", "Servicios", 200, "Ingresa vía SSH con el usuario 'alumno' y lee el archivo '/home/alumno/final_flag.txt'.", "FLAG{ssh_secure_shell_connected}"]
+    ];
+
+    const stmt = db.prepare(`INSERT OR REPLACE INTO challenges VALUES (?, ?, ?, ?, ?, ?)`);
+    challenges.forEach(c => stmt.run(c));
+    stmt.finalize();
+});
+
+app.get('/api/challenges', (req, res) => {
+    db.all(`SELECT id, title, category, points, description FROM challenges`, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/submit', (req, res) => {
+    const { challengeId, flagInput } = req.body;
+    const cleanFlag = (flagInput || '').trim();
+
+    if (!cleanFlag) return res.json({ success: false, message: "Debes ingresar una flag." });
+
+    if (challengeId === "reto_01") {
+        const macRegex = /^FLAG\{([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})\}$/;
+        if (macRegex.test(cleanFlag)) {
+            return res.json({ success: true, message: "¡Correcto! Dirección física (MAC) identificada." });
+        } else {
+            return res.json({ success: false, message: "Formato de MAC inválido. Usa: FLAG{XX-XX-XX-XX-XX-XX}" });
+        }
+    }
+
+    if (challengeId === "reto_02") {
+        const ipRegex = /^FLAG\{(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\}$/;
+        if (ipRegex.test(cleanFlag)) {
+            return res.json({ success: true, message: "¡Correcto! Servidor DNS identificado." });
+        } else {
+            return res.json({ success: false, message: "Formato de IP inválido. Usa: FLAG{192.168.1.1}" });
+        }
+    }
+
+    db.get(`SELECT flag, points FROM challenges WHERE id = ?`, [challengeId], (err, row) => {
+        if (err || !row) return res.status(404).json({ success: false, message: "Reto no encontrado." });
+        if (row.flag.trim() === cleanFlag) {
+            res.json({ success: true, message: `¡Correcto! Has ganado ${row.points} puntos.` });
+        } else {
+            res.json({ success: false, message: "Flag incorrecta. Inténtalo de nuevo." });
+        }
+    });
+});
+
+app.listen(PORT, '0.0.0.0', () => console.log(`CTF listo en puerto ${PORT}`));
+EOF
+
+cat << 'EOF' > plataforma-web/public/index.html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CTF - Prerrequisitos de Pentesting</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>🚩 CTF: Prerrequisitos Técnicos</h1>
+        <div id="score-board">Puntaje Total: <span id="total-score">0</span> pts</div>
+    </header>
+    <main class="container" id="challenges-container"></main>
+    <script src="app.js"></script>
+</body>
+</html>
+EOF
+
+cat << 'EOF' > plataforma-web/public/style.css
+body { font-family: 'Segoe UI', sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #334155; padding-bottom: 15px; margin-bottom: 30px; }
+#score-board { font-size: 1.2rem; background-color: #1e293b; padding: 10px 20px; border-radius: 8px; border: 1px solid #38bdf8; }
+.container { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+.card { background-color: #1e293b; border: 1px solid #334155; border-radius: 10px; padding: 20px; }
+.card.solved { border-color: #22c55e; background-color: #064e3b22; }
+.badge { display: inline-block; padding: 4px 8px; font-size: 0.8rem; border-radius: 4px; background-color: #0284c7; margin-bottom: 10px; }
+.input-group { display: flex; gap: 10px; margin-top: 15px; }
+input[type="text"] { flex: 1; padding: 8px 12px; border-radius: 5px; border: 1px solid #475569; background-color: #0f172a; color: #fff; }
+button { padding: 8px 16px; background-color: #2563eb; color: white; border: none; border-radius: 5px; cursor: pointer; }
+button:hover { background-color: #1d4ed8; }
+.result-msg { margin-top: 10px; font-size: 0.9rem; }
+.success { color: #4ade80; }
+.error { color: #f87171; }
+EOF
+
+cat << 'EOF' > plataforma-web/public/app.js
+let totalScore = 0;
+const solvedChallenges = new Set();
+document.addEventListener('DOMContentLoaded', fetchChallenges);
+
+async function fetchChallenges() {
+    const res = await fetch('/api/challenges');
+    const challenges = await res.json();
+    const container = document.getElementById('challenges-container');
+    container.innerHTML = '';
+    challenges.forEach(c => {
+        const card = document.createElement('div');
+        card.className = `card ${solvedChallenges.has(c.id) ? 'solved' : ''}`;
+        card.id = `card-${c.id}`;
+        card.innerHTML = `
+            <span class="badge">${c.category} - ${c.points} pts</span>
+            <h3>${c.title}</h3>
+            <p>${c.description}</p>
+            <div class="input-group">
+                <input type="text" id="input-${c.id}" placeholder="FLAG{...}" ${solvedChallenges.has(c.id) ? 'disabled' : ''}>
+                <button onclick="submitFlag('${c.id}', ${c.points})" ${solvedChallenges.has(c.id) ? 'disabled' : ''}>Enviar</button>
+            </div>
+            <div class="result-msg" id="msg-${c.id}"></div>
+        `;
+        container.appendChild(card);
+    });
+}
+
+async function submitFlag(id, points) {
+    const input = document.getElementById(`input-${id}`);
+    const msgDiv = document.getElementById(`msg-${id}`);
+    const flagInput = input.value;
+    if (!flagInput) return;
+    const res = await fetch('/api/submit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challengeId: id, flagInput })
+    });
+    const data = await res.json();
+    if (data.success) {
+        msgDiv.className = 'result-msg success';
+        msgDiv.textContent = data.message;
+        if (!solvedChallenges.has(id)) {
+            solvedChallenges.add(id);
+            totalScore += points;
+            document.getElementById('total-score').textContent = totalScore;
+            document.getElementById(`card-${id}`).classList.add('solved');
+            input.disabled = true;
+        }
+    } else {
+        msgDiv.className = 'result-msg error';
+        msgDiv.textContent = data.message;
+    }
+}
+EOF
+
+# 6. Orquestación docker-compose.yml
+cat << 'EOF' > docker-compose.yml
+services:
+  ctf_web:
+    build: ./plataforma-web
+    container_name: ctf_web_platform
+    ports:
+      - "8080:3000"
+
+  web_challenge:
+    image: nginx:alpine
+    container_name: ctf_http
+    ports:
+      - "80:80"
+    volumes:
+      - ./html:/usr/share/nginx/html:ro
+
+  ftp_challenge:
+    image: fauria/vsftpd
+    container_name: ctf_ftp
+    ports:
+      - "21:21"
+      - "20:20"
+      - "21100-21110:21100-21110"
+    environment:
+      FTP_USER: anonymous
+      FTP_PASS: anonymous
+      ANONYMOUS_ENABLE: "YES"
+      PASV_ENABLE: "YES"
+      PASV_MIN_PORT: 21100
+      PASV_MAX_PORT: 21110
+      PASV_ADDRESS: 0.0.0.0
+    volumes:
+      - ./ftp:/home/vsftpd/anonymous:ro
+
+  linux_challenge:
+    build: ./ssh
+    container_name: ctf_linux_ssh
+    ports:
+      - "2222:22"
+EOF
+
+# 7. Construir e iniciar contenedores
+docker compose up -d --build
