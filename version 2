@@ -1,4 +1,7 @@
-# 1. Crear directorio base y subcarpetas
+#!/bin/bash
+
+# 1. Detener cualquier contenedor previo y crear directorios
+docker compose down -v 2>/dev/null || true
 mkdir -p /home/smith/ctf-prerequisitos/{ftp,html,ssh,plataforma-web/public}
 cd /home/smith/ctf-prerequisitos
 
@@ -28,7 +31,7 @@ EOF
 cat << 'EOF' > ssh/Dockerfile
 FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get clean && apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-server \
     sudo \
     grep \
@@ -56,11 +59,10 @@ cat << 'EOF' > plataforma-web/package.json
 EOF
 
 cat << 'EOF' > plataforma-web/Dockerfile
-FROM node:18-alpine
+FROM node:18-slim
 WORKDIR /app
-RUN apk add --no-cache python3 make g++
 COPY package*.json ./
-RUN npm install
+RUN npm install --omit=dev
 COPY . .
 EXPOSE 3000
 CMD ["npm", "start"]
@@ -237,12 +239,15 @@ async function submitFlag(id, points) {
 }
 EOF
 
-# 6. Orquestación docker-compose.yml
+# 6. Orquestación docker-compose.yml con DNS configurados
 cat << 'EOF' > docker-compose.yml
 services:
   ctf_web:
     build: ./plataforma-web
     container_name: ctf_web_platform
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - "8080:3000"
 
@@ -275,11 +280,13 @@ services:
   linux_challenge:
     build: ./ssh
     container_name: ctf_linux_ssh
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     ports:
       - "2222:22"
 EOF
 
-# 7. Construir e iniciar contenedores sin caché residual
-docker compose down -v
+# 7. Compilación y despliegue
 docker compose build --no-cache
 docker compose up -d
